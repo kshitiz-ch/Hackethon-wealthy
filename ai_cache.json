@@ -1,0 +1,44 @@
+{
+    "1": {
+        "client_details": {
+            "id": "1",
+            "name": "Amit Sharma",
+            "type": "SIP Stoppage",
+            "raw_data": "Stopped 10k monthly SIP in Small Cap Fund after 2 years. Market dip panic suspected."
+        },
+        "analysis": {
+            "urgency_score": 95,
+            "talking_point": "Amit, let's connect right now to strategically manage your small-cap exposure and ensure you benefit from the inevitable market recovery.",
+            "action": "CALL"
+        },
+        "timestamp": 1769763786.439914
+    },
+    "2": {
+        "client_details": {
+            "id": "2",
+            "name": "Priya Verma",
+            "type": "High Cash Balance",
+            "raw_data": "Holding 50L in savings account for 6 months. Interested in low risk options."
+        },
+        "analysis": {
+            "urgency_score": 90,
+            "talking_point": "The 50 Lakhs held in savings is incurring significant opportunity cost; we must deploy that capital into tailored, low-risk alternatives immediately to generate superior returns.",
+            "action": "CALL"
+        },
+        "timestamp": 1769763800.7433941
+    },
+    "3": {
+        "client_details": {
+            "id": "3",
+            "name": "Rahul Dubey",
+            "type": "Insurance Renewal",
+            "raw_data": "Term policy expiring next month. Coverage 1Cr. Married, 2 kids."
+        },
+        "analysis": {
+            "urgency_score": 95,
+            "talking_point": "To prevent a lapse in your critical 1 Cr life protection next month, we need to finalize your renewal strategy immediately to safeguard your family's future.",
+            "action": "CALL"
+        },
+        "timestamp": 1769763814.009276
+    }
+}
