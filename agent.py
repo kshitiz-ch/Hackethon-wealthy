@@ -5,72 +5,116 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+genai.configure(api_key=os.getenv('AIzaSyA44KTejygzE3PCYhvXEe_2ZUJ0ibd38Hg'))
 
-# Configure the Gemini API
-genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+# --- CONFIGURATION ---
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    generation_config={"response_mime_type": "application/json"}
+)
 
-def analyze_opportunity(client_name, opportunity_type, raw_data):
+SYSTEM_PROMPT = """
+You are a **Senior Wealth Intelligence Engine**. Your goal is to analyze raw financial datasets and synthesize a "High-Impact Advisor Dashboard" json.
+
+### INPUT DATA STREAMS:
+1. **Portfolio Review:** Clients with underperforming schemes (Negative Alpha/XIRR Gap).
+2. **Stagnant SIPs:** SIPs running >2 years with 0% step-up.
+3. **Stopped SIPs:** Active SIPs with no payments in >2 months.
+4. **Insurance Gaps:** High-net-worth clients with low/no coverage.
+
+### YOUR TASKS:
+
+#### 1. CALCULATE "TOTAL OPPORTUNITY VALUE" (The Hero Metric)
+Normalize and sum these figures to get one "Wealth Impact" score:
+- **Stopped SIPs:** Annualized Value (Monthly Amount * 12).
+- **Stagnant SIPs:** Potential Step-up Value (Assume 10% of current SIP * 12).
+- **Insurance:** The `premium_gap` provided directly.
+- **Portfolio:** 1% of the `current_value` of underperforming funds (Assumed advisory fee impact).
+
+#### 2. IDENTIFY "TOP 10 FOCUS CLIENTS"
+- Group all data by `client_id`.
+- Score clients based on complexity and value. A client with *multiple* issues (e.g., Stopped SIP + Insurance Gap) ranks higher.
+- Select the top 10 highest-value clients.
+
+#### 3. GENERATE THE "WHY" (The Pitch)
+- **Dashboard Header:** 1-sentence executive summary (e.g., "Identified ₹12.5L in potential value across 45 clients...").
+- **Client Hook:** A short context string for the list view (e.g., "High Churn Risk: Stopped SIP of ₹10k/mo + ₹2Cr Insurance Gap.").
+
+---
+
+### STRICT JSON OUTPUT SCHEMA:
+{
+  "dashboard_hero": {
+    "total_opportunity_value": "Float (The calculated sum)",
+    "formatted_value": "String (e.g., '₹15.2 Lakhs')",
+    "executive_summary": "String",
+    "opportunity_breakdown": {
+      "insurance": "String (e.g. '₹10L')",
+      "sip_recovery": "String (e.g. '₹5L')",
+      "portfolio_rebalancing": "String (e.g. '₹20K')"
+    }
+  },
+  "top_focus_clients": [
+    {
+      "user_id": "String",
+      "client_name": "String",
+      "total_impact_value": "String (e.g. '₹1.5 L')",
+      "tags": ["Array of Strings", e.g., "Risk: Stopped SIP", "Opp: Insurance"],
+      "pitch_hook": "String (Max 2 lines)",
+      "drill_down_details": {
+        "portfolio_review": {
+           "has_issue": "Boolean",
+           "schemes": [ { "name": "String", "xirr_lag": "Float" } ]
+        },
+        "sip_health": {
+           "stopped_sips": [ { "scheme": "String", "days_stopped": "Int", "amount": "Float" } ],
+           "stagnant_sips": [ { "scheme": "String", "years_running": "Float" } ]
+        },
+        "insurance": {
+           "has_gap": "Boolean",
+           "gap_amount": "Float",
+           "wealth_band": "String"
+        }
+      }
+    }
+  ]
+}
+"""
+
+def generate_dashboard_insight(portfolio_data, stagnant_data, stopped_data, insurance_data):
     """
-    Analyzes a client opportunity using Gemini 1.5 Flash with Compliance Guardrails.
+    Aggregates the 4 data streams and calls Gemini to build the Dashboard JSON.
     """
     try:
-        # Configure the model with JSON output enforcement
-        model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            generation_config={"response_mime_type": "application/json"}
-        )
-
-        # The Refined "Brain" Prompt
-        system_instruction = """
-        You are a Premier Wealth Strategist. Your goal is to analyze client portfolios and identify "Optimization Opportunities" using sophisticated, compliant terminology.
-
-        ### 1. TERMINOLOGY STANDARDS (The "Lexicon"):
-        - **SIP Stoppage:** Use terms like "Investment Interruption", "Compounding Break", "Discontinuity". (NEVER say "Mandate Fail").
-        - **SIP Stagnation:** Use terms like "Inflation Drag", "Contribution Stagnation", "Static Allocation".
-        - **Portfolio Lag:** Use terms like "Performance Drag", "Consistency Gap", "Allocation Efficiency".
-        - **Insurance Gap:** Use terms like "Protection Deficit", "Coverage Alignment Gap".
-
-        ### 2. COMPLIANCE GUARDRAILS (Strict AMFI Adherence):
-        - **BANNED:** "Buy", "Sell", "Profit", "Guaranteed", "Target", "Mandate Check".
-        - **REQUIRED:** "Optimize", "Rebalance", "Review", "Align", "Allocate", "Switch".
-
-        ### 3. SCORING LOGIC (0-100):
-        - **90+ (Critical):** SIP Stopped > 30 Days OR Portfolio Weight > 15% in Lagging Fund.
-        - **75-89 (High):** Large Protection Deficit OR Tax-Efficient Switch Opportunity (LTU > 80%).
-        - **50-74 (Medium):** Static SIPs (Stagnation) > 3 Years.
-
-        ### 4. OUTPUT SCHEMA (JSON):
-        {
-          "client_id": "string",
-          "urgency_score": "integer",
-          "opportunity_type": "SIP_RECOVERY | PORTFOLIO_OPTIMIZATION | PROTECTION_ENHANCEMENT",
-          "headline": "Sophisticated 3-4 word title (e.g. 'Compounding Break Alert')",
-          "talking_point": "Conversational, professional script focusing on long-term wealth impact. Max 2 sentences.",
-          "suggested_action": "Professional Action Label (e.g. 'Restore Regularity', 'Review Allocation')"
-        }
-        """
-
-        # Combine System Context + Specific Client Data
-        final_prompt = f"""
-        {system_instruction}
-
-        ### ANALYZE THIS CLIENT:
-        Client Name: {client_name}
-        Opportunity Type: {opportunity_type}
-        Raw Data Context: {json.dumps(raw_data)}
-        """
-
-        response = model.generate_content(final_prompt)
+        # Construct the context payload
+        input_payload = f"""
+        ### RAW DATASETS FOR ANALYSIS:
         
-        # Parse the JSON response
+        1. PORTFOLIO REVIEW (Underperforming Funds):
+        {json.dumps(portfolio_data, default=str)}
+
+        2. STAGNANT SIP DATA (Growth Opps):
+        {json.dumps(stagnant_data, default=str)}
+
+        3. STOPPED SIP DATA (Risk Alerts):
+        {json.dumps(stopped_data, default=str)}
+
+        4. INSURANCE OPPORTUNITY DATA (Protection Gaps):
+        {json.dumps(insurance_data, default=str)}
+        """
+
+        response = model.generate_content(SYSTEM_PROMPT + input_payload)
         return json.loads(response.text)
 
     except Exception as e:
-        # Return a safe default error object
+        print(f"AI Agent Error: {e}")
+        # Return a safe fallback so the UI doesn't crash
         return {
-            "urgency_score": 0,
-            "headline": "Manual Review Required",
-            "talking_point": "Data analysis incomplete. Please review client file manually.",
-            "suggested_action": "Open Profile",
-            "error_details": str(e)
+            "dashboard_hero": {
+                "total_opportunity_value": 0,
+                "formatted_value": "Calculating...",
+                "executive_summary": "AI is analyzing your client data. Please refresh shortly.",
+                "opportunity_breakdown": {"insurance": "0", "sip_recovery": "0", "portfolio_rebalancing": "0"}
+            },
+            "top_focus_clients": []
         }
