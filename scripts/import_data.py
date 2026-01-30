@@ -45,17 +45,31 @@ def import_sip_data(json_file_path: str):
     try:
         imported = 0
         skipped = 0
+        errors = 0
+        session_sip_ids = set()  # Track sip_meta_ids in current session
         
         for record in data:
             try:
-                # Check if record already exists
+                sip_meta_id = record.get('sip_meta_id')
+                
+                # Check if record already exists in database
                 existing = db.query(SIPRecord).filter(
-                    SIPRecord.sip_meta_id == record.get('sip_meta_id')
+                    SIPRecord.sip_meta_id == sip_meta_id
                 ).first()
                 
                 if existing:
                     skipped += 1
+                    if skipped % 50 == 0:
+                        print(f"   Skipped {skipped} duplicates from database...")
                     continue
+                
+                # Check if already in current session
+                if sip_meta_id in session_sip_ids:
+                    skipped += 1
+                    continue
+                
+                # Add to session tracker
+                session_sip_ids.add(sip_meta_id)
                 
                 # Create SIP record
                 sip_record = SIPRecord(
@@ -109,22 +123,37 @@ def import_sip_data(json_file_path: str):
                 db.add(sip_record)
                 imported += 1
                 
-                if imported % 100 == 0:
-                    db.commit()
-                    print(f"Imported {imported} records...")
+                # Commit in smaller batches
+                if imported % 50 == 0:
+                    try:
+                        db.commit()
+                        print(f"✅ Imported {imported} records (skipped {skipped} duplicates)...")
+                        session_sip_ids.clear()
+                    except Exception as commit_error:
+                        print(f"⚠️  Batch commit failed: {commit_error}")
+                        db.rollback()
+                        session_sip_ids.clear()
+                        errors += 1
                     
             except Exception as e:
-                print(f"Error importing record {record.get('sip_meta_id')}: {str(e)}")
+                print(f"⚠️  Error with SIP record {record.get('sip_meta_id')}: {str(e)}")
+                db.rollback()
+                errors += 1
                 continue
         
         # Final commit
-        db.commit()
-        print(f"\nImport completed!")
-        print(f"Total imported: {imported}")
-        print(f"Total skipped (duplicates): {skipped}")
+        try:
+            db.commit()
+            print(f"\n✅ Import completed!")
+            print(f"Total imported: {imported}")
+            print(f"Total skipped (duplicates): {skipped}")
+            print(f"Total errors: {errors}")
+        except Exception as final_commit_error:
+            print(f"⚠️  Final commit had issues: {final_commit_error}")
+            db.rollback()
         
     except Exception as e:
-        print(f"Error during import: {str(e)}")
+        print(f"❌ Error during import: {str(e)}")
         db.rollback()
     finally:
         db.close()

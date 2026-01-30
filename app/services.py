@@ -1,10 +1,10 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dateutil import parser as date_parser
 from typing import List, Optional
-from app.models import SIPRecord, InsuranceRecord
-from app.schemas import OpportunityClient, OpportunityStats, SIPRecordResponse, InsuranceOpportunity, InsuranceRecordResponse
+from app.models import SIPRecord, InsuranceRecord, User, PortfolioHolding
+from app.schemas import OpportunityClient, OpportunityStats, SIPRecordResponse, InsuranceOpportunity, InsuranceRecordResponse, UserResponse, PortfolioOpportunity, PortfolioHoldingResponse
 
 
 def parse_date_safe(date_string: str) -> Optional[datetime]:
@@ -492,4 +492,355 @@ def get_insurance_statistics(
         'total_premium_gap': total_gap,
         'potential_additional_revenue': total_gap,
         'breakdown_by_type': type_breakdown
+    }
+
+
+# ==================== User Services ====================
+
+def get_all_users(
+    db: Session,
+    agent_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+) -> List[UserResponse]:
+    """Get all users with optional filtering"""
+    query = db.query(User)
+    
+    if agent_id:
+        query = query.filter(User.agent_external_id == agent_id)
+    
+    users = query.order_by(desc(User.total_current_value)).offset(offset).limit(limit).all()
+    return users
+
+
+def get_user_by_id(db: Session, user_id: str) -> Optional[UserResponse]:
+    """Get a specific user by user_id"""
+    return db.query(User).filter(User.user_id == user_id).first()
+
+
+def get_high_value_users(
+    db: Session,
+    min_value: float = 1000000.0,
+    agent_id: Optional[str] = None,
+    limit: int = 100
+) -> List[UserResponse]:
+    """Get high-value users based on total current value"""
+    query = db.query(User).filter(
+        User.total_current_value >= min_value
+    )
+    
+    if agent_id:
+        query = query.filter(User.agent_external_id == agent_id)
+    
+    return query.order_by(desc(User.total_current_value)).limit(limit).all()
+
+
+def get_users_by_age_range(
+    db: Session,
+    min_age: int = 25,
+    max_age: int = 70,
+    agent_id: Optional[str] = None,
+    limit: int = 100
+) -> List[UserResponse]:
+    """Get users within a specific age range"""
+    current_year = datetime.now().year
+    max_birth_year = current_year - min_age
+    min_birth_year = current_year - max_age
+    
+    query = db.query(User).filter(
+        User.date_of_birth.isnot(None),
+        func.extract('year', User.date_of_birth) >= min_birth_year,
+        func.extract('year', User.date_of_birth) <= max_birth_year
+    )
+    
+    if agent_id:
+        query = query.filter(User.agent_external_id == agent_id)
+    
+    return query.order_by(desc(User.total_current_value)).limit(limit).all()
+
+
+def get_user_statistics(
+    db: Session,
+    agent_id: Optional[str] = None
+) -> dict:
+    """Get user statistics"""
+    query = db.query(User)
+    
+    if agent_id:
+        query = query.filter(User.agent_external_id == agent_id)
+    
+    total_users = query.count()
+    total_aum = query.with_entities(func.sum(User.total_current_value)).scalar() or 0
+    total_invested = query.with_entities(func.sum(User.total_invested_value)).scalar() or 0
+    avg_portfolio = total_aum / total_users if total_users > 0 else 0
+    
+    # Count by product
+    users_with_mf = query.filter(User.mf_current_value > 0).count()
+    users_with_fd = query.filter(User.fd_current_value > 0).count()
+    users_with_pms = query.filter(User.pms_current_value > 0).count()
+    users_with_aif = query.filter(User.aif_current_value > 0).count()
+    users_with_preipo = query.filter(User.preipo_current_value > 0).count()
+    
+    return {
+        'total_users': total_users,
+        'total_aum': total_aum,
+        'total_invested': total_invested,
+        'average_portfolio_value': avg_portfolio,
+        'total_returns': total_aum - total_invested,
+        'overall_return_percentage': ((total_aum - total_invested) / total_invested * 100) if total_invested > 0 else 0,
+        'product_penetration': {
+            'mutual_funds': users_with_mf,
+            'fixed_deposits': users_with_fd,
+            'pms': users_with_pms,
+            'aif': users_with_aif,
+            'preipo': users_with_preipo
+        }
+    }
+
+
+# ==================== Portfolio Services ====================
+
+def get_underperforming_funds(
+    db: Session,
+    user_id: Optional[str] = None,
+    min_current_value: float = 0,
+    limit: int = 100
+) -> List[PortfolioOpportunity]:
+    """
+    Find underperforming mutual funds based on negative alpha and XIRR performance.
+    These are funds that should be reviewed for switching/redemption.
+    """
+    query = db.query(PortfolioHolding).filter(
+        or_(
+            PortfolioHolding.three_year_returns_alpha < 0,
+            PortfolioHolding.five_year_returns_alpha < 0,
+            PortfolioHolding.xirr_performance < 0
+        ),
+        PortfolioHolding.current_value >= min_current_value
+    )
+    
+    if user_id:
+        query = query.filter(PortfolioHolding.user_id == user_id)
+    
+    holdings = query.order_by(desc(PortfolioHolding.current_value)).limit(limit).all()
+    
+    opportunities = []
+    for holding in holdings:
+        # Determine opportunity type based on performance
+        issues = []
+        if holding.three_year_returns_alpha and holding.three_year_returns_alpha < 0:
+            issues.append(f"3Y alpha: {holding.three_year_returns_alpha:.2f}%")
+        if holding.five_year_returns_alpha and holding.five_year_returns_alpha < 0:
+            issues.append(f"5Y alpha: {holding.five_year_returns_alpha:.2f}%")
+        if holding.xirr_performance and holding.xirr_performance < 0:
+            issues.append(f"XIRR underperformance: {holding.xirr_performance:.2f}%")
+        
+        opportunities.append(PortfolioOpportunity(
+            user_id=holding.user_id,
+            scheme_name=holding.scheme_name,
+            wpc=holding.wpc,
+            category=holding.category,
+            amc_name=holding.amc_name,
+            current_value=holding.current_value,
+            portfolio_weight=holding.portfolio_weight,
+            opportunity_type="Underperforming Fund",
+            opportunity_description=f"Fund showing negative performance. {', '.join(issues)}. {holding.comment or 'Consider switching to better performing alternatives.'}",
+            w_rating=holding.w_rating,
+            xirr_performance=holding.xirr_performance,
+            three_year_returns_alpha=holding.three_year_returns_alpha,
+            five_year_returns_alpha=holding.five_year_returns_alpha,
+            rolling_12q_beat_percentage=holding.rolling_12q_beat_percentage
+        ))
+    
+    return opportunities
+
+
+def get_low_rated_funds(
+    db: Session,
+    user_id: Optional[str] = None,
+    max_rating: float = 3.0,
+    min_current_value: float = 0,
+    limit: int = 100
+) -> List[PortfolioOpportunity]:
+    """
+    Find low-rated funds (rating < 3.0) that should be reviewed.
+    """
+    query = db.query(PortfolioHolding).filter(
+        PortfolioHolding.w_rating.isnot(None),
+        PortfolioHolding.current_value >= min_current_value
+    )
+    
+    if user_id:
+        query = query.filter(PortfolioHolding.user_id == user_id)
+    
+    holdings = query.all()
+    
+    # Filter by rating (convert string to float)
+    low_rated = []
+    for holding in holdings:
+        try:
+            rating = float(holding.w_rating)
+            if rating < max_rating:
+                low_rated.append(holding)
+        except (ValueError, TypeError):
+            continue
+    
+    # Sort by current value and limit
+    low_rated.sort(key=lambda x: x.current_value, reverse=True)
+    low_rated = low_rated[:limit]
+    
+    opportunities = []
+    for holding in low_rated:
+        opportunities.append(PortfolioOpportunity(
+            user_id=holding.user_id,
+            scheme_name=holding.scheme_name,
+            wpc=holding.wpc,
+            category=holding.category,
+            amc_name=holding.amc_name,
+            current_value=holding.current_value,
+            portfolio_weight=holding.portfolio_weight,
+            opportunity_type="Low Rated Fund",
+            opportunity_description=f"Fund has low rating of {holding.w_rating}. {holding.comment or 'Consider reviewing and switching to higher rated alternatives.'}",
+            w_rating=holding.w_rating,
+            xirr_performance=holding.xirr_performance,
+            three_year_returns_alpha=holding.three_year_returns_alpha,
+            five_year_returns_alpha=holding.five_year_returns_alpha,
+            rolling_12q_beat_percentage=holding.rolling_12q_beat_percentage
+        ))
+    
+    return opportunities
+
+
+def get_portfolio_rebalancing_opportunities(
+    db: Session,
+    user_id: Optional[str] = None,
+    min_concentration: float = 25.0,
+    limit: int = 100
+) -> List[PortfolioOpportunity]:
+    """
+    Find portfolios with high concentration in single funds (>25% weight).
+    These may need rebalancing for better diversification.
+    """
+    query = db.query(PortfolioHolding).filter(
+        PortfolioHolding.portfolio_weight >= min_concentration
+    )
+    
+    if user_id:
+        query = query.filter(PortfolioHolding.user_id == user_id)
+    
+    holdings = query.order_by(desc(PortfolioHolding.portfolio_weight)).limit(limit).all()
+    
+    opportunities = []
+    for holding in holdings:
+        opportunities.append(PortfolioOpportunity(
+            user_id=holding.user_id,
+            scheme_name=holding.scheme_name,
+            wpc=holding.wpc,
+            category=holding.category,
+            amc_name=holding.amc_name,
+            current_value=holding.current_value,
+            portfolio_weight=holding.portfolio_weight,
+            opportunity_type="Portfolio Concentration",
+            opportunity_description=f"Fund represents {holding.portfolio_weight:.1f}% of portfolio. Consider rebalancing for better diversification across multiple funds and categories.",
+            w_rating=holding.w_rating,
+            xirr_performance=holding.xirr_performance,
+            three_year_returns_alpha=holding.three_year_returns_alpha,
+            five_year_returns_alpha=holding.five_year_returns_alpha,
+            rolling_12q_beat_percentage=holding.rolling_12q_beat_percentage
+        ))
+    
+    return opportunities
+
+
+def get_all_portfolio_opportunities(
+    db: Session,
+    user_id: Optional[str] = None,
+    limit: int = 100
+) -> List[PortfolioOpportunity]:
+    """Get all portfolio opportunities combined"""
+    all_opps = []
+    
+    # Get opportunities from each category
+    all_opps.extend(get_underperforming_funds(db, user_id, limit=limit//3))
+    all_opps.extend(get_low_rated_funds(db, user_id, limit=limit//3))
+    all_opps.extend(get_portfolio_rebalancing_opportunities(db, user_id, limit=limit//3))
+    
+    # Sort by current value
+    all_opps.sort(key=lambda x: x.current_value, reverse=True)
+    
+    return all_opps[:limit]
+
+
+def get_user_portfolio_holdings(
+    db: Session,
+    user_id: str,
+    limit: int = 100
+) -> List[PortfolioHoldingResponse]:
+    """Get all portfolio holdings for a specific user"""
+    holdings = db.query(PortfolioHolding).filter(
+        PortfolioHolding.user_id == user_id
+    ).order_by(desc(PortfolioHolding.current_value)).limit(limit).all()
+    
+    return holdings
+
+
+def get_portfolio_statistics(
+    db: Session,
+    user_id: Optional[str] = None
+) -> dict:
+    """Get portfolio statistics"""
+    query = db.query(PortfolioHolding)
+    
+    if user_id:
+        query = query.filter(PortfolioHolding.user_id == user_id)
+    
+    total_holdings = query.count()
+    total_value = query.with_entities(func.sum(PortfolioHolding.current_value)).scalar() or 0
+    avg_holding_value = total_value / total_holdings if total_holdings > 0 else 0
+    
+    # Get underperforming counts
+    underperforming_count = query.filter(
+        or_(
+            PortfolioHolding.three_year_returns_alpha < 0,
+            PortfolioHolding.xirr_performance < 0
+        )
+    ).count()
+    
+    # Get low rated count
+    low_rated_count = 0
+    for holding in query.all():
+        try:
+            if holding.w_rating and float(holding.w_rating) < 3.0:
+                low_rated_count += 1
+        except (ValueError, TypeError):
+            continue
+    
+    # Get concentrated holdings
+    concentrated_count = query.filter(
+        PortfolioHolding.portfolio_weight >= 25.0
+    ).count()
+    
+    # Category breakdown
+    category_breakdown = query.with_entities(
+        PortfolioHolding.category,
+        func.count(PortfolioHolding.id).label('count'),
+        func.sum(PortfolioHolding.current_value).label('total_value')
+    ).group_by(PortfolioHolding.category).all()
+    
+    category_dict = {
+        item.category or 'Unknown': {
+            'count': item.count,
+            'total_value': item.total_value or 0
+        }
+        for item in category_breakdown
+    }
+    
+    return {
+        'total_holdings': total_holdings,
+        'total_portfolio_value': total_value,
+        'average_holding_value': avg_holding_value,
+        'underperforming_funds_count': underperforming_count,
+        'low_rated_funds_count': low_rated_count,
+        'concentrated_holdings_count': concentrated_count,
+        'category_breakdown': category_dict
     }

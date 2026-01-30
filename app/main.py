@@ -8,8 +8,8 @@ from app import services
 
 app = FastAPI(
     title="Wealthy Partner Dashboard API",
-    description="API for identifying selling opportunities in client portfolios (SIP + Insurance)",
-    version="2.0.0"
+    description="API for identifying selling opportunities in client portfolios (SIP + Insurance + Portfolio Analysis)",
+    version="3.0.0"
 )
 
 # CORS middleware
@@ -26,10 +26,11 @@ app.add_middleware(
 def read_root():
     return {
         "message": "Wealthy Partner Dashboard API",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "modules": {
             "sip": "Systematic Investment Plan opportunities",
-            "insurance": "Insurance coverage and gap analysis"
+            "insurance": "Insurance coverage and gap analysis",
+            "portfolio": "Portfolio holdings and fund performance analysis"
         },
         "endpoints": {
             "sip_opportunities": {
@@ -44,9 +45,24 @@ def read_root():
                 "no_coverage": "/api/insurance/opportunities/no-coverage",
                 "stats": "/api/insurance/stats"
             },
+            "portfolio_opportunities": {
+                "all": "/api/portfolio/opportunities",
+                "underperforming": "/api/portfolio/opportunities/underperforming",
+                "low_rated": "/api/portfolio/opportunities/low-rated",
+                "concentration": "/api/portfolio/opportunities/concentration",
+                "stats": "/api/portfolio/stats"
+            },
             "clients": {
                 "sips": "/api/clients/{user_id}/sips",
-                "insurance": "/api/clients/{user_id}/insurance"
+                "insurance": "/api/clients/{user_id}/insurance",
+                "portfolio": "/api/clients/{user_id}/portfolio"
+            },
+            "users": {
+                "all": "/api/users",
+                "by_id": "/api/users/{user_id}",
+                "high_value": "/api/users/high-value/list",
+                "by_age": "/api/users/age-range/list",
+                "stats": "/api/users/stats"
             },
             "agents": "/api/agents"
         }
@@ -190,6 +206,138 @@ def get_client_insurance(
 ):
     """Get all insurance records for a specific client"""
     return services.get_client_insurance_records(db, user_id)
+
+
+# ==================== User Endpoints ====================
+
+@app.get("/api/users", response_model=List[schemas.UserResponse])
+def get_all_users(
+    agent_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
+):
+    """Get all users with pagination"""
+    return services.get_all_users(db, agent_id=agent_id, limit=limit, offset=offset)
+
+
+@app.get("/api/users/{user_id}", response_model=schemas.UserResponse)
+def get_user(
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get a specific user by user_id"""
+    user = services.get_user_by_id(db, user_id)
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@app.get("/api/users/high-value/list", response_model=List[schemas.UserResponse])
+def get_high_value_users(
+    min_value: float = Query(1000000.0, ge=0),
+    agent_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """Get high-value users based on portfolio value"""
+    return services.get_high_value_users(db, min_value=min_value, agent_id=agent_id, limit=limit)
+
+
+@app.get("/api/users/age-range/list", response_model=List[schemas.UserResponse])
+def get_users_by_age(
+    min_age: int = Query(25, ge=18, le=100),
+    max_age: int = Query(70, ge=18, le=100),
+    agent_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """Get users within a specific age range (based on mock DOB)"""
+    return services.get_users_by_age_range(db, min_age=min_age, max_age=max_age, agent_id=agent_id, limit=limit)
+
+
+@app.get("/api/users/stats")
+def get_user_statistics(
+    agent_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get user and portfolio statistics"""
+    return services.get_user_statistics(db, agent_id=agent_id)
+
+
+# ==================== Portfolio Endpoints ====================
+
+@app.get("/api/portfolio/opportunities", response_model=List[schemas.PortfolioOpportunity])
+def get_all_portfolio_opportunities(
+    user_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """Get all portfolio optimization opportunities (underperforming, low-rated, concentrated)"""
+    return services.get_all_portfolio_opportunities(db, user_id=user_id, limit=limit)
+
+
+@app.get("/api/portfolio/opportunities/underperforming", response_model=List[schemas.PortfolioOpportunity])
+def get_underperforming_funds(
+    user_id: Optional[str] = None,
+    min_current_value: float = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """
+    Get underperforming mutual funds with negative alpha or XIRR performance.
+    These funds are underperforming their benchmarks and should be reviewed.
+    """
+    return services.get_underperforming_funds(db, user_id=user_id, min_current_value=min_current_value, limit=limit)
+
+
+@app.get("/api/portfolio/opportunities/low-rated", response_model=List[schemas.PortfolioOpportunity])
+def get_low_rated_funds(
+    user_id: Optional[str] = None,
+    max_rating: float = Query(3.0, ge=0, le=5.0),
+    min_current_value: float = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """
+    Get low-rated funds (rating below threshold).
+    Consider switching these to higher-rated alternatives.
+    """
+    return services.get_low_rated_funds(db, user_id=user_id, max_rating=max_rating, min_current_value=min_current_value, limit=limit)
+
+
+@app.get("/api/portfolio/opportunities/concentration", response_model=List[schemas.PortfolioOpportunity])
+def get_concentration_opportunities(
+    user_id: Optional[str] = None,
+    min_concentration: float = Query(25.0, ge=0, le=100),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """
+    Get portfolios with high concentration in single funds.
+    These may need rebalancing for better diversification.
+    """
+    return services.get_portfolio_rebalancing_opportunities(db, user_id=user_id, min_concentration=min_concentration, limit=limit)
+
+
+@app.get("/api/portfolio/stats")
+def get_portfolio_statistics(
+    user_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get portfolio statistics including performance metrics"""
+    return services.get_portfolio_statistics(db, user_id=user_id)
+
+
+@app.get("/api/clients/{user_id}/portfolio", response_model=List[schemas.PortfolioHoldingResponse])
+def get_client_portfolio(
+    user_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """Get all portfolio holdings for a specific client"""
+    return services.get_user_portfolio_holdings(db, user_id, limit=limit)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,59 @@
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
+
+
+class UserBase(BaseModel):
+    uid: Optional[str] = None
+    user_id: Optional[str] = None
+    crn: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    agent_external_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    agent_email: Optional[str] = None
+    agent_phone_number: Optional[str] = None
+    member_id: Optional[str] = None
+    total_current_value: Optional[float] = None
+    mf_current_value: Optional[float] = None
+    fd_current_value: Optional[float] = None
+    aif_current_value: Optional[float] = None
+    deb_current_value: Optional[float] = None
+    pms_current_value: Optional[float] = None
+    preipo_current_value: Optional[float] = None
+    total_invested_value: Optional[float] = None
+    mf_invested_value: Optional[float] = None
+    fd_invested_value: Optional[float] = None
+    aif_invested_value: Optional[float] = None
+    deb_invested_value: Optional[float] = None
+    pms_invested_value: Optional[float] = None
+    preipo_invested_value: Optional[float] = None
+    trak_cob_opportunity_value: Optional[float] = None
+    latest_as_on_date: Optional[str] = None
+    first_active_at: Optional[str] = None
+    first_active_mf: Optional[str] = None
+    first_active_fd: Optional[str] = None
+    first_active_insurance: Optional[str] = None
+    first_active_mld: Optional[str] = None
+    first_active_ncd: Optional[str] = None
+    first_active_aif: Optional[str] = None
+    first_active_pms: Optional[str] = None
+    first_active_preipo: Optional[str] = None
+    first_active_mf_sip: Optional[str] = None
+    inserted_at: Optional[str] = None
+    event_date: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class UserResponse(UserBase):
+    id: int
+    created_in_db: Optional[datetime] = None
+    updated_in_db: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
 
 
 class InsuranceRecordBase(BaseModel):
@@ -159,6 +212,77 @@ class OpportunityStats(BaseModel):
     total_opportunities: int
     total_potential_revenue: float
     breakdown_by_type: dict
+    
+    class Config:
+        from_attributes = True
+
+
+class PortfolioHoldingBase(BaseModel):
+    user_id: Optional[str] = None
+    pan_number: Optional[str] = None
+    as_on_date: Optional[str] = None
+    wpc: Optional[str] = None
+    scheme_name: Optional[str] = None
+    category: Optional[str] = None
+    amc_name: Optional[str] = None
+    nav: Optional[float] = None
+    nav_as_on: Optional[str] = None
+    current_value: Optional[float] = None
+    portfolio_weight: Optional[float] = None
+    benchmark_name: Optional[str] = None
+    live_xirr: Optional[float] = None
+    benchmark_xirr: Optional[float] = None
+    xirr_performance: Optional[float] = None
+    one_year_returns: Optional[float] = None
+    three_year_returns_cagr: Optional[float] = None
+    benchmark_three_year_returns_cagr: Optional[float] = None
+    three_year_returns_alpha: Optional[float] = None
+    five_year_returns_cagr: Optional[float] = None
+    benchmark_five_year_returns_cagr: Optional[float] = None
+    five_year_returns_alpha: Optional[float] = None
+    rolling_4q_beat_count: Optional[int] = None
+    rolling_4q_total_count: Optional[int] = None
+    rolling_4q_beat_percentage: Optional[float] = None
+    rolling_12q_beat_count: Optional[int] = None
+    rolling_12q_total_count: Optional[int] = None
+    rolling_12q_beat_percentage: Optional[float] = None
+    realized_stcg: Optional[float] = None
+    realized_ltcg: Optional[float] = None
+    unrealized_stu: Optional[float] = None
+    unrealized_ltu: Optional[float] = None
+    cost_of_unrealized_stu: Optional[float] = None
+    cost_of_unrealized_ltu: Optional[float] = None
+    unrealized_stcg: Optional[float] = None
+    unrealized_ltcg: Optional[float] = None
+    comment: Optional[str] = None
+    w_rating: Optional[str] = None
+
+
+class PortfolioHoldingResponse(PortfolioHoldingBase):
+    id: int
+    created_in_db: Optional[datetime] = None
+    updated_in_db: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class PortfolioOpportunity(BaseModel):
+    user_id: str
+    user_name: Optional[str] = None
+    scheme_name: str
+    wpc: str
+    category: str
+    amc_name: str
+    current_value: float
+    portfolio_weight: float
+    opportunity_type: str
+    opportunity_description: str
+    w_rating: Optional[str] = None
+    xirr_performance: Optional[float] = None
+    three_year_returns_alpha: Optional[float] = None
+    five_year_returns_alpha: Optional[float] = None
+    rolling_12q_beat_percentage: Optional[float] = None
     
     class Config:
         from_attributes = True
